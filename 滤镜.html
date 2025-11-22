@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RetroCam Pro - Digital Film Lab</title>
+    <style>
+        /* --- 核心变量 --- */
+        :root {
+            --bg-color: #121212;
+            --sidebar-bg: #1a1a1a;
+            --control-bar-bg: rgba(26, 26, 26, 0.85);
+            --text-main: #f0f0f0;
+            --text-sub: #888888;
+            --brand: #f1c40f; /* Kodak Yellow */
+            --border-color: #333;
+            --font-ui: "Helvetica Neue", Helvetica, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+            --font-mono: "Courier New", monospace;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: var(--font-ui);
+            margin: 0;
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+        }
+
+        /* --- 布局容器 --- */
+        .app-layout {
+            display: flex;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* --- 1. 中间：预览区域 --- */
+        .preview-container {
+            flex: 1;
+            background: #080808;
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+
+        /* 画布：初始隐藏，有图片时显示 */
+        canvas {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            transition: transform 0.1s ease-out;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+            cursor: pointer; /* 指示可点击更换 */
+            opacity: 0; /* 初始隐藏 */
+        }
+        
+        canvas.has-image {
+            opacity: 1;
+        }
+
+        /* 上传触发器 (+) */
+        .upload-trigger {
+            position: absolute;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #444;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            z-index: 10;
+            border: 2px dashed #333;
+            width: 200px;
+            height: 200px;
+            border-radius: 20px;
+        }
+
+        .upload-trigger:hover {
+            color: var(--brand);
+            border-color: var(--brand);
+            background: rgba(241, 196, 15, 0.05);
+            transform: scale(1.02);
+        }
+
+        .plus-icon {
+            font-size: 60px;
+            font-weight: 100;
+            line-height: 1;
+            margin-bottom: 10px;
+        }
+
+        .upload-text {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        /* --- 2. 底部：悬浮控制栏 (缩放/强度/下载) --- */
+        .bottom-controls {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px); /* 初始下移隐藏 */
+            background: var(--control-bar-bg);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            padding: 15px 40px;
+            border-radius: 50px;
+            display: flex;
+            align-items: center;
+            gap: 40px;
+            border: 1px solid rgba(255,255,255,0.1);
+            z-index: 100;
+            opacity: 0;
+            transition: all 0.5s cubic-bezier(0.19, 1, 0.22, 1);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+
+        .bottom-controls.visible {
+            transform: translateX(-50%) translateY(0);
+            opacity: 1;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .control-label {
+            font-size: 12px;
+            color: var(--text-sub);
+            white-space: nowrap;
+            font-weight: 600;
+            min-width: 60px;
+        }
+        
+        .control-value {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--brand);
+            min-width: 40px;
+            text-align: right;
+        }
+
+        input[type="range"] {
+            width: 150px;
+            accent-color: var(--brand);
+            height: 4px;
+            background: #444;
+            border-radius: 2px;
+            outline: none;
+            -webkit-appearance: none;
+            cursor: pointer;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px; height: 16px;
+            background: #fff;
+            border: 2px solid var(--brand);
+            border-radius: 50%;
+            transition: transform 0.1s;
+        }
+        input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.2); }
+
+        .btn-download {
+            background: var(--brand);
+            color: #000;
+            border: none;
+            padding: 10px 24px;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 14px;
+            cursor: pointer;
+            text-transform: uppercase;
+            transition: all 0.2s;
+            white-space: nowrap;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .btn-download:hover {
+            background: #fff;
+            box-shadow: 0 0 15px rgba(255,255,255,0.3);
+        }
+
+        /* --- 3. 右侧：滤镜侧边栏 --- */
+        .sidebar {
+            width: 360px;
+            min-width: 360px;
+            background: var(--sidebar-bg);
+            border-left: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            z-index: 20;
+        }
+
+        .sidebar-header {
+            padding: 25px;
+            border-bottom: 1px solid var(--border-color);
+            background: var(--sidebar-bg);
+        }
+
+        .app-title {
+            font-size: 20px;
+            font-weight: 900;
+            letter-spacing: 1px;
+        }
+        .app-title span { color: var(--brand); }
+
+        .filter-scroll-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        /* 滚动条样式 */
+        .filter-scroll-area::-webkit-scrollbar { width: 6px; }
+        .filter-scroll-area::-webkit-scrollbar-track { background: transparent; }
+        .filter-scroll-area::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+
+        .filter-card {
+            background: #252525;
+            border: 2px solid transparent;
+            padding: 15px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            position: relative;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .filter-card:hover {
+            background: #303030;
+            transform: translateX(-2px);
+        }
+
+        .filter-card.active {
+            background: #303030;
+            border-color: var(--brand);
+        }
+
+        .filter-names {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            flex: 1; /* 占据剩余空间 */
+            margin-right: 10px;
+        }
+
+        .name-en {
+            font-size: 15px;
+            font-weight: 700;
+            color: #fff;
+            line-height: 1.2;
+        }
+
+        .name-cn {
+            font-size: 13px;
+            color: var(--text-sub);
+            line-height: 1.2;
+        }
+
+        .filter-tag {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            background: #111;
+            color: #666;
+            padding: 4px 6px;
+            border-radius: 4px;
+            font-weight: bold;
+            white-space: nowrap;
+        }
+        .filter-card.active .filter-tag {
+            background: var(--brand);
+            color: #000;
+        }
+
+        #fileInput { display: none; }
+    </style>
+</head>
+<body>
+
+    <div class="app-layout">
+        <!-- 1. 中间预览区 -->
+        <div class="preview-container">
+            <!-- 上传触发器 -->
+            <div class="upload-trigger" id="uploadTrigger" onclick="document.getElementById('fileInput').click()">
+                <div class="plus-icon">+</div>
+                <div class="upload-text">Load Film</div>
+            </div>
+            
+            <!-- 画布 (点击也可触发上传) -->
+            <canvas id="canvas" title="Click to change photo"></canvas>
+
+            <!-- 2. 底部悬浮控制栏 -->
+            <div class="bottom-controls" id="bottomControls">
+                <!-- 滤镜强度 -->
+                <div class="control-group">
+                    <span class="control-label">Intensity</span>
+                    <input type="range" id="strength" min="0" max="100" value="100">
+                    <span class="control-value" id="strengthVal">100%</span>
+                </div>
+
+                <!-- 分隔线 -->
+                <div style="width: 1px; height: 20px; background: #444;"></div>
+
+                <!-- 缩放 -->
+                <div class="control-group">
+                    <span class="control-label">Zoom</span>
+                    <input type="range" id="zoom" min="10" max="200" value="100">
+                    <span class="control-value" id="zoomVal">100%</span>
+                </div>
+
+                <!-- 下载按钮 -->
+                <button class="btn-download" onclick="downloadImage()">
+                    Download <span>↓</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- 3. 右侧滤镜列表 -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <div class="app-title">RETRO<span>CAM</span></div>
+                <div style="font-size: 12px; color: #666; margin-top: 5px;">DIGITAL FILM LAB</div>
+            </div>
+            <div class="filter-scroll-area" id="filterList">
+                <!-- JS 生成滤镜卡片 -->
+            </div>
+        </div>
+    </div>
+
+    <input type="file" id="fileInput" accept="image/*">
+
+    <script>
+        // --- 核心变量 ---
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const fileInput = document.getElementById('fileInput');
+        const uploadTrigger = document.getElementById('uploadTrigger');
+        const bottomControls = document.getElementById('bottomControls');
+        
+        const strengthSlider = document.getElementById('strength');
+        const zoomSlider = document.getElementById('zoom');
+        const strengthVal = document.getElementById('strengthVal');
+        const zoomVal = document.getElementById('zoomVal');
+
+        let img = new Image();
+        let grainCanvas = document.createElement('canvas');
+        let currentFilter = 'vision500t';
+
+        // --- 滤镜数据 (保持完整) ---
+        const filters = {
+            'vision500t': {
+                nameEn: 'Kodak Vision3 500T',
+                nameCn: '柯达 电影卷 500T',
+                tag: 'CINEMA',
+                params: {
+                    contrast: 1.25, brightness: 1.05, saturate: 0.9, hue: -5,
+                    halations: { color: 'rgba(255, 100, 50, 0.3)', blur: 20 },
+                    overlays: [
+                        { color: 'rgba(0, 40, 60, 0.3)', mode: 'overlay' },
+                        { color: 'rgba(255, 200, 100, 0.15)', mode: 'soft-light' }
+                    ],
+                    grain: 0.25
+                }
+            },
+            'cinestill800t': {
+                nameEn: 'Cinestill 800T',
+                nameCn: '夜景之王 800T',
+                tag: 'NIGHT',
+                params: {
+                    contrast: 1.1, brightness: 1.1, saturate: 1.05, hue: -10,
+                    halations: { color: 'rgba(255, 0, 0, 0.4)', blur: 30 },
+                    overlays: [{ color: 'rgba(0, 20, 40, 0.2)', mode: 'multiply' }],
+                    grain: 0.35
+                }
+            },
+            'portra400': {
+                nameEn: 'Kodak Portra 400',
+                nameCn: '柯达 人像王 400',
+                tag: 'PORTRAIT',
+                params: {
+                    contrast: 0.95, brightness: 1.1, saturate: 0.95, hue: 2,
+                    overlays: [{ color: 'rgba(255, 240, 220, 0.2)', mode: 'soft-light' }],
+                    grain: 0.2
+                }
+            },
+            'provia100f': {
+                nameEn: 'Fujichrome Provia 100F',
+                nameCn: '富士 专业反转片',
+                tag: 'SLIDE',
+                params: {
+                    contrast: 1.1, brightness: 1.05, saturate: 1.1, hue: 0,
+                    overlays: [{ color: 'rgba(0, 10, 50, 0.05)', mode: 'multiply' }],
+                    grain: 0.1
+                }
+            },
+             'proimage100': {
+                nameEn: 'Kodak Pro Image 100',
+                nameCn: '柯达 专业日常 100',
+                tag: 'DAILY',
+                params: {
+                    contrast: 1.05, brightness: 1.05, saturate: 1.1, hue: 3,
+                    overlays: [{ color: 'rgba(255, 230, 200, 0.1)', mode: 'screen' }],
+                    grain: 0.15
+                }
+            },
+            'gold200': {
+                nameEn: 'Kodak Gold 200',
+                nameCn: '柯达 金像 200',
+                tag: 'WARM',
+                params: {
+                    contrast: 1.15, brightness: 1.1, saturate: 1.25, hue: 5,
+                    overlays: [{ color: 'rgba(255, 220, 0, 0.15)', mode: 'overlay' }],
+                    grain: 0.35
+                }
+            },
+            'ektar100': {
+                nameEn: 'Kodak Ektar 100',
+                nameCn: '柯达 极彩 100',
+                tag: 'VIVID',
+                params: {
+                    contrast: 1.5, brightness: 1.0, saturate: 1.35, hue: 0,
+                    overlays: [{ color: 'rgba(0, 0, 50, 0.1)', mode: 'overlay' }],
+                    grain: 0.15
+                }
+            },
+            'superia400': {
+                nameEn: 'Fuji Superia 400',
+                nameCn: '富士 业务卷 400',
+                tag: 'DAILY',
+                params: {
+                    contrast: 1.05, brightness: 1.1, saturate: 1.2, hue: 0,
+                    overlays: [
+                        { color: 'rgba(0, 50, 20, 0.15)', mode: 'multiply' },
+                        { color: 'rgba(255, 0, 100, 0.05)', mode: 'screen' }
+                    ],
+                    grain: 0.25
+                }
+            },
+            'pro400h': {
+                nameEn: 'Fuji Pro 400H',
+                nameCn: '富士 400H',
+                tag: 'PASTEL',
+                params: {
+                    contrast: 0.9, brightness: 1.2, saturate: 1.1, hue: -5,
+                    overlays: [{ color: 'rgba(180, 255, 255, 0.15)', mode: 'screen' }],
+                    grain: 0.2
+                }
+            },
+            'velvia50': {
+                nameEn: 'Fuji Velvia 50',
+                nameCn: '富士 风光反转片',
+                tag: 'SLIDE',
+                params: {
+                    contrast: 1.6, brightness: 1.0, saturate: 1.5, hue: 0,
+                    overlays: [{ color: 'rgba(200, 0, 100, 0.1)', mode: 'overlay' }],
+                    grain: 0.1
+                }
+            },
+            'lomo800': {
+                nameEn: 'Lomo 800',
+                nameCn: 'Lomo 高感 800',
+                tag: 'TOY',
+                params: {
+                    contrast: 1.35, brightness: 1.1, saturate: 1.4, hue: 5,
+                    overlays: [{ color: 'rgba(255, 0, 255, 0.1)', mode: 'overlay' }],
+                    grain: 0.5
+                }
+            },
+            'hp5': {
+                nameEn: 'Ilford HP5 Plus',
+                nameCn: '伊尔福 黑白 HP5',
+                tag: 'B&W',
+                params: {
+                    contrast: 1.3, brightness: 1.1, saturate: 0, hue: 0,
+                    overlays: [{ color: 'rgba(20, 20, 20, 0.1)', mode: 'multiply' }],
+                    grain: 0.4
+                }
+            },
+            'trix400': {
+                nameEn: 'Kodak Tri-X 400',
+                nameCn: '柯达 经典黑白',
+                tag: 'B&W',
+                params: {
+                    contrast: 1.5, brightness: 1.0, saturate: 0, hue: 0,
+                    overlays: [],
+                    grain: 0.55
+                }
+            },
+            'delta3200': {
+                nameEn: 'Ilford Delta 3200',
+                nameCn: '伊尔福 粗颗粒 3200',
+                tag: 'GRAIN',
+                params: {
+                    contrast: 1.1, brightness: 1.2, saturate: 0, hue: 0,
+                    overlays: [{ color: 'rgba(50, 50, 50, 0.2)', mode: 'overlay' }],
+                    grain: 0.8
+                }
+            },
+            'colorplus': {
+                nameEn: 'Kodak ColorPlus',
+                nameCn: '柯达 暖阳 200',
+                tag: 'VINTAGE',
+                params: {
+                    contrast: 1.1, brightness: 1.05, saturate: 1.1, hue: 8,
+                    overlays: [{ color: 'rgba(200, 150, 50, 0.1)', mode: 'overlay' }],
+                    grain: 0.3
+                }
+            },
+            'polaroid': {
+                nameEn: 'Polaroid 600',
+                nameCn: '宝丽来 复古',
+                tag: 'INSTANT',
+                params: {
+                    contrast: 0.9, brightness: 1.15, saturate: 0.8, hue: 0,
+                    overlays: [
+                        { color: 'rgba(0, 255, 255, 0.05)', mode: 'screen' },
+                        { color: 'rgba(255, 255, 0, 0.05)', mode: 'multiply' }
+                    ],
+                    grain: 0.3
+                }
+            }
+        };
+
+        // --- 初始化 UI ---
+        function initFilters() {
+            const list = document.getElementById('filterList');
+            Object.keys(filters).forEach(key => {
+                const f = filters[key];
+                const div = document.createElement('div');
+                div.className = `filter-card ${key === currentFilter ? 'active' : ''}`;
+                div.onclick = () => selectFilter(key, div);
+                div.innerHTML = `
+                    <div class="filter-names">
+                        <span class="name-en">${f.nameEn}</span>
+                        <span class="name-cn">${f.nameCn}</span>
+                    </div>
+                    <span class="filter-tag">${f.tag}</span>
+                `;
+                list.appendChild(div);
+            });
+        }
+        initFilters();
+
+        function selectFilter(key, el) {
+            currentFilter = key;
+            document.querySelectorAll('.filter-card').forEach(d => d.classList.remove('active'));
+            el.classList.add('active');
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            
+            strengthSlider.value = 100;
+            strengthVal.innerText = '100%';
+            render();
+        }
+
+        // --- 图像处理逻辑 ---
+        function generateGrain() {
+            grainCanvas.width = 256;
+            grainCanvas.height = 256;
+            const gCtx = grainCanvas.getContext('2d');
+            const imgData = gCtx.createImageData(256, 256);
+            const buffer = new Uint32Array(imgData.data.buffer);
+            for (let i = 0; i < buffer.length; i++) {
+                const val = (Math.random() * 255) | 0;
+                buffer[i] = (255 << 24) | (val << 16) | (val << 8) | val;
+            }
+            gCtx.putImageData(imgData, 0, 0);
+        }
+        generateGrain();
+
+        function render() {
+            if (!img.src) return;
+            
+            const config = filters[currentFilter].params;
+            const strength = strengthSlider.value / 100;
+            const w = canvas.width;
+            const h = canvas.height;
+            
+            ctx.clearRect(0, 0, w, h);
+
+            // 基础调色
+            if (strength > 0) {
+                const b = 1 + (config.brightness - 1) * strength;
+                const c = 1 + (config.contrast - 1) * strength;
+                const s = 1 + (config.saturate - 1) * strength;
+                const hue = (config.hue || 0) * strength;
+                ctx.filter = `brightness(${b}) contrast(${c}) saturate(${s}) hue-rotate(${hue}deg)`;
+            } else {
+                ctx.filter = 'none';
+            }
+            
+            ctx.drawImage(img, 0, 0, w, h);
+            ctx.filter = 'none';
+
+            if (strength > 0) {
+                // 光晕
+                if (config.halations) {
+                    ctx.globalCompositeOperation = 'screen';
+                    ctx.globalAlpha = 0.6 * strength;
+                    ctx.filter = `blur(${config.halations.blur}px)`;
+                    ctx.drawImage(img, 0, 0, w, h);
+                    
+                    ctx.globalCompositeOperation = 'source-atop';
+                    ctx.fillStyle = config.halations.color;
+                    ctx.fillRect(0, 0, w, h);
+                    ctx.filter = 'none';
+                }
+
+                // 叠加
+                if (config.overlays) {
+                    config.overlays.forEach(layer => {
+                        ctx.globalCompositeOperation = layer.mode;
+                        ctx.globalAlpha = strength; 
+                        ctx.fillStyle = layer.color;
+                        ctx.fillRect(0, 0, w, h);
+                    });
+                }
+
+                // 颗粒
+                if (config.grain) {
+                    ctx.globalCompositeOperation = 'overlay';
+                    ctx.globalAlpha = config.grain * strength;
+                    const pattern = ctx.createPattern(grainCanvas, 'repeat');
+                    ctx.fillStyle = pattern;
+                    ctx.fillRect(0, 0, w, h);
+                }
+            }
+
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.globalAlpha = 1.0;
+
+            updateZoom();
+        }
+
+        function updateZoom() {
+            const scale = zoomSlider.value / 100;
+            canvas.style.transform = `scale(${scale})`;
+            zoomVal.innerText = Math.round(scale * 100) + '%';
+        }
+
+        // --- 事件监听 ---
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (evt) => {
+                img = new Image();
+                img.onload = () => {
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    
+                    // 切换 UI 状态
+                    uploadTrigger.style.display = 'none';
+                    canvas.classList.add('has-image');
+                    bottomControls.classList.add('visible');
+
+                    // 智能计算初始缩放
+                    const container = document.querySelector('.preview-container');
+                    const scaleX = (container.clientWidth * 0.85) / img.width;
+                    const scaleY = (container.clientHeight * 0.85) / img.height;
+                    const initialScale = Math.min(scaleX, scaleY, 0.9); // 留出一点边距
+                    
+                    zoomSlider.value = Math.round(initialScale * 100);
+                    if(zoomSlider.value < 10) zoomSlider.value = 10;
+                    
+                    render();
+                };
+                img.src = evt.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+
+        // 点击 Canvas 也能重新上传
+        canvas.addEventListener('click', () => {
+            if(img.src) {
+                fileInput.click();
+            }
+        });
+
+        strengthSlider.addEventListener('input', (e) => {
+            strengthVal.innerText = e.target.value + '%';
+            render();
+        });
+
+        zoomSlider.addEventListener('input', (e) => {
+            updateZoom();
+        });
+
+        function downloadImage() {
+            if(!img.src) return;
+            const link = document.createElement('a');
+            link.download = `RetroCam_${currentFilter}_${Date.now()}.jpg`;
+            link.href = canvas.toDataURL('image/jpeg', 0.95);
+            link.click();
+        }
+    </script>
+</body>
+</html>
